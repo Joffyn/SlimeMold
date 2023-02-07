@@ -1,0 +1,331 @@
+﻿#include "/Engine/Public/Platform.ush"
+
+struct Slime
+{
+    float X;
+    float Y;
+    float Angle;
+    int Type;
+};
+#define PI 3.14159265359
+#define FourthPI 0.7853981
+
+RWStructuredBuffer<Slime> SlimeBuffer;
+RWTexture2D<float4> RenderTarget;
+Texture2D<float4> RenderImport;
+
+float TotalTime;
+float DeltaTime;
+float MoveSpeed;
+float TurnSpeed;
+float SensorDistance;
+int SensorSize;
+
+int SlimeAmount;
+
+float RandNumber(int pos) //Grundfunktionen f�r randomisering
+{
+    
+    unsigned int seed = 2147483647;
+    
+    unsigned int BIT_NOISE1 = 0xB5297A4D;
+    unsigned int BIT_NOISE2 = 0x68E31DA4;
+    unsigned int BIT_NOISE3 = 0x1B56C4E9;
+    
+    unsigned int mangled = (unsigned int) pos;
+    mangled *= BIT_NOISE1;
+    mangled += seed;
+    mangled ^= (mangled >> 8);
+    mangled += BIT_NOISE2;
+    mangled ^= (mangled << 8);
+    mangled *= BIT_NOISE3;
+    mangled ^= (mangled >> 8);
+    return (float) mangled / 0xffffffff;
+}
+float Sense(Slime aSlime, float anAngle, uint width, uint height)
+{
+    float2 dir = float2(cos(aSlime.Angle + anAngle), sin(aSlime.Angle + anAngle));
+    float2 pos = float2(aSlime.X, aSlime.Y);
+    float2 newPos = pos + dir * MoveSpeed * DeltaTime;
+    float sum = 0;
+    
+    int2 sensorCentre = float2(aSlime.X, aSlime.Y) + dir * SensorDistance;
+    
+    for (int offX = -SensorSize; offX <= SensorSize; offX++)
+    {
+        for (int offY = -SensorSize; offY <= SensorSize; offY++)
+        {
+            int2 pos = sensorCentre + int2(offX, offY);
+            [flatten]
+            if (pos.x >= width)
+            {
+                pos.x = pos.x - width;
+            }
+            else if (pos.x <= 0)
+            {
+                pos.x = pos.x + width;
+            }
+            if (pos.y >= 0 && pos.y < height)
+            {
+                [flatten]
+                if (aSlime.Type == 0)
+                {
+                    sum += RenderImport[pos].r;
+                    sum -= RenderImport[pos].g;
+                    sum -= RenderImport[pos].b;
+                }
+                else if (aSlime.Type == 1)
+                {
+                    sum += RenderImport[pos].g;
+                    sum -= RenderImport[pos].r;
+                    sum -= RenderImport[pos].b;
+                }
+                else if (aSlime.Type == 2)
+                {
+                    sum += RenderImport[pos].b;
+                    sum -= RenderImport[pos].r;
+                    sum -= RenderImport[pos].g;
+                }
+                    
+            }
+        }
+    }
+    return sum;
+}
+
+[numthreads(8, 8, THREADS_Z)]
+void ExampleComputeShader(
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint GroupIndex : SV_GroupIndex,
+    uint3 GroupID : SV_GroupThreadID)
+{
+    int index = DispatchThreadId.y * sqrt(SlimeAmount) + DispatchThreadId.x;
+    if (index > SlimeAmount - 1)
+    {
+        return;
+    }
+    uint width;
+    uint height;
+    
+    RenderTarget.GetDimensions(width, height);
+    Slime inputSlime = SlimeBuffer[index];
+    
+    float forward = Sense(inputSlime, 0, width, height);
+    float left = Sense(inputSlime, FourthPI, width, height);
+    float right = Sense(inputSlime, -FourthPI, width, height);
+    
+    float random = RandNumber(GroupIndex);
+    
+    if (forward > left && forward > right)
+    {
+        inputSlime.Angle += 0;
+    }
+    else if (forward < left && forward < right)
+    {
+        inputSlime.Angle += (random - 0.5) * 2 * TurnSpeed * DeltaTime;
+    }
+    else if (right > left)
+    {
+        inputSlime.Angle -= random * TurnSpeed * DeltaTime;
+    }
+    else if (left > right)
+    {
+        inputSlime.Angle += random * TurnSpeed * DeltaTime;
+    }
+    
+    
+    float2 dir = float2(cos(inputSlime.Angle), sin(inputSlime.Angle));
+    float2 pos = float2(inputSlime.X, inputSlime.Y);
+    float2 newPos = pos + dir * MoveSpeed * DeltaTime;
+        
+    [flatten]
+    if (newPos.x >= width)
+    {
+        newPos.x = newPos.x - width;
+    }
+    else if (newPos.x <= 0)
+    {
+        newPos.x = newPos.x + width;
+    }
+    
+    [branch]
+    if (newPos.y >= height || newPos.y <= 0)
+    {
+        newPos.y = clamp(newPos.y, 0.001f, height - 0.001f);
+        float rand = RandNumber(DispatchThreadId.x);
+        SlimeBuffer[index].Angle = rand * 2 * PI;
+    }
+   
+    SlimeBuffer[index].X = newPos.x;
+    SlimeBuffer[index].Y = newPos.y;
+    SlimeBuffer[index].Angle = inputSlime.Angle;
+    
+    [flatten]
+    if (SlimeBuffer[index].Type == 0)
+    {
+        RenderTarget[int2(SlimeBuffer[index].X, SlimeBuffer[index].Y)] = float4(1, 0, 0, 1);
+    }
+    else if (SlimeBuffer[index].Type == 1)
+    {
+        RenderTarget[int2(SlimeBuffer[index].X, SlimeBuffer[index].Y)] = float4(0, 1, 0, 1);
+    }
+    else if (SlimeBuffer[index].Type == 2)
+    {
+        RenderTarget[int2(SlimeBuffer[index].X, SlimeBuffer[index].Y)] = float4(0, 0, 1, 1);
+    }
+    
+}
+//No Color
+//#include "/Engine/Public/Platform.ush"
+
+//struct Slime
+//{
+//    float X;
+//    float Y;
+//    float Angle;
+//};
+//#define PI 3.14159265359
+//#define FourthPI 0.7853981
+
+//RWStructuredBuffer<Slime> SlimeBuffer;
+//RWTexture2D<float4> RenderTarget;
+//Texture2D<float4> RenderImport;
+
+//float TotalTime;
+//float DeltaTime;
+//float MoveSpeed;
+//float TurnSpeed;
+//float SensorDistance;
+//int SensorSize;
+
+//int SlimeAmount;
+
+//float RandNumber(int pos) //Grundfunktionen f�r randomisering
+//{
+    
+//    unsigned int seed = 2147483647;
+    
+//    unsigned int BIT_NOISE1 = 0xB5297A4D;
+//    unsigned int BIT_NOISE2 = 0x68E31DA4;
+//    unsigned int BIT_NOISE3 = 0x1B56C4E9;
+    
+//    unsigned int mangled = (unsigned int) pos;
+//    mangled *= BIT_NOISE1;
+//    mangled += seed;
+//    mangled ^= (mangled >> 8);
+//    mangled += BIT_NOISE2;
+//    mangled ^= (mangled << 8);
+//    mangled *= BIT_NOISE3;
+//    mangled ^= (mangled >> 8);
+//    return (float) mangled / 0xffffffff;
+//	//STOLEN FROM SQUIRREL EISERLOH
+//}
+//float Sense(Slime aSlime, float anAngle, uint width, uint height)
+//{
+//    float2 dir = float2(cos(aSlime.Angle + anAngle), sin(aSlime.Angle + anAngle));
+//    float2 pos = float2(aSlime.X, aSlime.Y);
+//    float2 newPos = pos + dir * MoveSpeed * DeltaTime;
+//    float sum = 0;
+    
+//    int2 sensorCentre = float2(aSlime.X, aSlime.Y) + dir * SensorDistance;
+    
+//    for (int offX = -SensorSize; offX <= SensorSize; offX++)
+//    {
+//        for (int offY = -SensorSize; offY <= SensorSize; offY++)
+//        {
+//            int2 pos = sensorCentre + int2(offX, offY);
+            
+            
+//            [flatten]
+//            if (pos.x >= width)
+//            {
+//                pos.x = pos.x - width;
+//            }
+//            else if (pos.x <= 0)
+//            {
+//                pos.x = pos.x + width;
+//            }
+//            if (pos.y >= 0 && pos.y < height)
+//            {
+//                sum += RenderImport[pos].a;
+//            }
+//        }
+//    }
+//    return sum;
+//}
+
+
+
+
+
+//[numthreads(8, 8, THREADS_Z)]
+//void ExampleComputeShader(
+//	uint3 DispatchThreadId : SV_DispatchThreadID,
+//	uint GroupIndex : SV_GroupIndex,
+//    uint3 GroupID : SV_GroupThreadID)
+//{
+//    int index = DispatchThreadId.y * sqrt(SlimeAmount) + DispatchThreadId.x;
+//    if (index > SlimeAmount - 1)
+//    {
+//        return;
+//    }
+//    uint width;
+//    uint height;
+    
+//    RenderTarget.GetDimensions(width, height);
+//    Slime inputSlime = SlimeBuffer[index];
+    
+//    float forward = Sense(inputSlime, 0, width, height);
+//    float left = Sense(inputSlime, FourthPI, width, height);
+//    float right = Sense(inputSlime, -FourthPI, width, height);
+    
+//    float random = RandNumber(GroupIndex);
+    
+//    if (forward > left && forward > right)
+//    {
+//        inputSlime.Angle += 0;
+//    }
+//    else if (forward < left && forward < right)
+//    {
+//        inputSlime.Angle += (random - 0.5) * 2 * TurnSpeed * DeltaTime;
+//    }
+//    else if (right > left)
+//    {
+//        inputSlime.Angle -= random * TurnSpeed * DeltaTime;
+//    }
+//    else if (left > right)
+//    {
+//        inputSlime.Angle += random * TurnSpeed * DeltaTime;
+//    }
+    
+    
+//    float2 dir = float2(cos(inputSlime.Angle), sin(inputSlime.Angle));
+//    float2 pos = float2(inputSlime.X, inputSlime.Y);
+//    float2 newPos = pos + dir * MoveSpeed * DeltaTime;
+
+//    [flatten]
+//    if (newPos.x >= width)
+//    {
+//        newPos.x = newPos.x - width;
+//    }
+//    else if (newPos.x <= 0)
+//    {
+//        newPos.x = newPos.x + width;
+//    }
+
+//    [branch]
+//    if (newPos.y >= height || newPos.y <= 0)
+//    {
+//        newPos.y = clamp(newPos.y, 0.001f, height - 0.001f);
+//        float rand = RandNumber(DispatchThreadId.x);
+//        SlimeBuffer[index].Angle = rand * 2 * PI;
+//    }
+
+        
+//    SlimeBuffer[index].X = newPos.x;
+//    SlimeBuffer[index].Y = newPos.y;
+//    SlimeBuffer[index].Angle = inputSlime.Angle;
+    
+
+//    RenderTarget[int2(SlimeBuffer[index].X, SlimeBuffer[index].Y)] = float4(1, 1, 1, 1);
+//}

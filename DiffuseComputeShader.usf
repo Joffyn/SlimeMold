@@ -1,0 +1,55 @@
+#include "/Engine/Public/Platform.ush"
+
+RWTexture2D<float4> RenderTarget;
+Texture2D<float4> RenderImport;
+float DeltaTime;
+float EvaporateSpeed;
+float DiffuseSpeed;
+
+[numthreads(16, 16, THREADS_Z)]
+void DiffuseComputeShader(
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint GroupIndex : SV_GroupIndex )
+{
+    uint width;
+    uint height;
+    RenderTarget.GetDimensions(width, height);
+	
+	
+    if (DispatchThreadId.x < 0 || DispatchThreadId.x >= width || DispatchThreadId.y < 0 || DispatchThreadId.y >= height)
+    {
+        return;
+    }
+	
+    float4 original = RenderImport[DispatchThreadId.xy];
+    float4 sum = 0;
+	
+    for (int offX = -1; offX <= 1; offX++)
+    {
+        for (int offY = -1; offY <= 1; offY++)
+        {
+            int sampleX = DispatchThreadId.x + offX;
+            int sampleY = DispatchThreadId.y + offY;
+            
+            if (sampleY >= 0 && sampleY < height)
+            {
+                [flatten] if (sampleX < 0)
+                {
+                    sampleX += width;
+                }
+                else if (sampleX > width)
+                {
+                    sampleX -= width;
+                }
+                    sum += RenderImport[int2(sampleX, sampleY)];
+            }
+        }
+    }
+    float4 blurKernel = sum / 9;
+    
+    float4 diffuseValue = lerp(original, blurKernel, DiffuseSpeed * DeltaTime);
+    
+    float4 finalResult = max(0, diffuseValue - EvaporateSpeed * DeltaTime);
+	
+    RenderTarget[DispatchThreadId.xy] = finalResult;
+}
